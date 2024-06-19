@@ -4,6 +4,7 @@ import mediapipe as mp
 import numpy as np
 import vgamepad as vg
 
+
 class VirtualFightController:
     def __init__(self):
         self.camera = cv2.VideoCapture(0)
@@ -12,12 +13,11 @@ class VirtualFightController:
         self.pose = self.mp_pose.Pose()
         self.gamepad = vg.VX360Gamepad()
 
-        self.punch_count_r = 0
-        self.punch_count_l = 0
-        self.angle_threshold = 180
         self.cooldown_time = 0.5
         self.last_punch_r = time.time()
         self.last_punch_l = time.time()
+        self.last_walk_r = time.time()
+        self.last_walk_l = time.time()
 
     def calculate_angle(self, a, b, c):
         a = np.array(a)
@@ -50,9 +50,8 @@ class VirtualFightController:
                        pose_landmarks.landmark[self.mp_pose.PoseLandmark.RIGHT_WRIST].y]
             angle_right = self.calculate_angle(shoulder_r, elbow_r, wrist_r)
 
-            if angle_right > 160 and angle_right <= self.angle_threshold and (
+            if 160 < angle_right <= 180 and (
                     time.time() - self.last_punch_r) > self.cooldown_time:
-                self.punch_count_r += 1
                 self.last_punch_r = time.time()
                 return "right"
 
@@ -68,20 +67,74 @@ class VirtualFightController:
                        pose_landmarks.landmark[self.mp_pose.PoseLandmark.LEFT_WRIST].y]
             angle_left = self.calculate_angle(shoulder_l, elbow_l, wrist_l)
 
-            if angle_left > 160 and angle_left <= self.angle_threshold and (
+            if 150 < angle_left <= 180 and (
                     time.time() - self.last_punch_l) > self.cooldown_time:
-                self.punch_count_l += 1
                 self.last_punch_l = time.time()
                 return "left"
 
         return None
 
-    def toPunch(self):
-        self.gamepad.press_button(vg.XUSB_BUTTON.XUSB_GAMEPAD_X)
-        self.gamepad.update()
-        time.sleep(0.1)
-        self.gamepad.release_button(vg.XUSB_BUTTON.XUSB_GAMEPAD_X)
-        self.gamepad.update()
+    def detect_walk(self, pose_landmarks):
+        if self.points_visible(pose_landmarks, [self.mp_pose.PoseLandmark.RIGHT_SHOULDER,
+                                                self.mp_pose.PoseLandmark.RIGHT_HIP,
+                                                self.mp_pose.PoseLandmark.RIGHT_KNEE]):
+            shoulder_r = [pose_landmarks.landmark[self.mp_pose.PoseLandmark.RIGHT_SHOULDER].x,
+                          pose_landmarks.landmark[self.mp_pose.PoseLandmark.RIGHT_SHOULDER].y]
+            hip_r = [pose_landmarks.landmark[self.mp_pose.PoseLandmark.RIGHT_HIP].x,
+                     pose_landmarks.landmark[self.mp_pose.PoseLandmark.RIGHT_HIP].y]
+            knee_r = [pose_landmarks.landmark[self.mp_pose.PoseLandmark.RIGHT_KNEE].x,
+                      pose_landmarks.landmark[self.mp_pose.PoseLandmark.RIGHT_KNEE].y]
+            angle_right = self.calculate_angle(shoulder_r, hip_r, knee_r)
+
+            if 90 < angle_right <= 130 and (
+                    time.time() - self.last_walk_r) > self.cooldown_time:
+                self.last_walk_r = time.time()
+                return "right"
+
+        if self.points_visible(pose_landmarks, [self.mp_pose.PoseLandmark.LEFT_SHOULDER,
+                                                self.mp_pose.PoseLandmark.LEFT_HIP,
+                                                self.mp_pose.PoseLandmark.LEFT_KNEE]):
+            shoulder_l = [pose_landmarks.landmark[self.mp_pose.PoseLandmark.LEFT_SHOULDER].x,
+                          pose_landmarks.landmark[self.mp_pose.PoseLandmark.LEFT_SHOULDER].y]
+            hip_l = [pose_landmarks.landmark[self.mp_pose.PoseLandmark.LEFT_HIP].x,
+                     pose_landmarks.landmark[self.mp_pose.PoseLandmark.LEFT_HIP].y]
+            knee_l = [pose_landmarks.landmark[self.mp_pose.PoseLandmark.LEFT_KNEE].x,
+                      pose_landmarks.landmark[self.mp_pose.PoseLandmark.LEFT_KNEE].y]
+            angle_left = self.calculate_angle(shoulder_l, hip_l, knee_l)
+
+            if 90 < angle_left <= 130 and (
+                    time.time() - self.last_walk_l) > self.cooldown_time:
+                self.last_walk_r = time.time()
+                return "left"
+        return None
+
+    def to_punch(self, arm):
+        if arm == "left":
+            self.gamepad.press_button(vg.XUSB_BUTTON.XUSB_GAMEPAD_X)
+            self.gamepad.update()
+            time.sleep(0.1)
+            self.gamepad.release_button(vg.XUSB_BUTTON.XUSB_GAMEPAD_X)
+            self.gamepad.update()
+        elif arm == "right":
+            self.gamepad.press_button(vg.XUSB_BUTTON.XUSB_GAMEPAD_Y)
+            self.gamepad.update()
+            time.sleep(0.1)
+            self.gamepad.release_button(vg.XUSB_BUTTON.XUSB_GAMEPAD_Y)
+            self.gamepad.update()
+
+    def to_walk(self, direction):
+        if direction == "right":
+            self.gamepad.left_joystick(-32767, 0)
+            self.gamepad.update()
+            time.sleep(0.3)
+            self.gamepad.left_joystick(0, 0)
+            self.gamepad.update()
+        if direction == "left":
+            self.gamepad.left_joystick(32767, 0)
+            self.gamepad.update()
+            time.sleep(0.3)
+            self.gamepad.left_joystick(0, 0)
+            self.gamepad.update()
 
     def run(self):
         while True:
@@ -97,9 +150,13 @@ class VirtualFightController:
             if results.pose_landmarks:
                 self.mp_draw.draw_landmarks(frame, results.pose_landmarks, self.mp_pose.POSE_CONNECTIONS)
                 detected_punch = self.detect_punch(results.pose_landmarks)
+                detected_walk = self.detect_walk(results.pose_landmarks)
 
                 if detected_punch:
-                    self.toPunch()
+                    self.to_punch(detected_punch)
+
+                if detected_walk:
+                    self.to_walk(detected_walk)
 
             cv2.imshow("Virtual Fight Controller", frame)
 
@@ -108,6 +165,7 @@ class VirtualFightController:
 
         self.camera.release()
         cv2.destroyAllWindows()
+
 
 if __name__ == "__main__":
     controller = VirtualFightController()
